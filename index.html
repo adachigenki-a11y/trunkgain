@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trunk Gain VR（試作 v0.1）</title>
+<style>
+  :root { --bg:#f7f7f5; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --accent:#1d4ed8; }
+  body { margin:0; font-family: system-ui, "Noto Sans JP", sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:760px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:1.3rem; margin:0 0 4px; }
+  p, li { line-height:1.7; font-size:.95rem; }
+  .muted { color:var(--muted); font-size:.85rem; }
+  fieldset { border:1px solid var(--line); border-radius:8px; margin:14px 0; padding:10px 14px; }
+  legend { font-weight:700; font-size:.9rem; }
+  label { display:block; margin:6px 0; font-size:.9rem; }
+  input[type=text], input[type=number] { width:100%; max-width:420px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:.95rem; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:1rem; margin:6px 6px 6px 0; cursor:pointer; }
+  button.secondary { background:#374151; }
+  #status { white-space:pre-line; background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px; font-size:.85rem; min-height:3em; }
+  code { background:#eef2ff; padding:1px 4px; border-radius:4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>体幹前屈ゲイン操作VR（試作 v0.1）</h1>
+  <p class="muted">Meta Quest 3 のブラウザで開いて使用します。参加者の視点は常に正確なまま（VR酔い対策）で、前屈量を示す目標物の動きだけをゲイン倍します。</p>
+
+  <fieldset>
+    <legend>実験設定</legend>
+    <label>参加者ID <input id="pid" type="text" value="P001"></label>
+    <label>ブロックのゲイン順序（カンマ区切り。例：1.0,0.8,1.2,1.0）
+      <input id="seq" type="text" value="1.0,0.8,1.2,1.0"></label>
+    <label>目標物の移動倍率 k（頭部の下降量1 cmあたりの目標物の移動量。基本は1.0）
+      <input id="k" type="number" step="0.1" value="1.0"></label>
+    <p class="muted">ブロックは参加者には「A, B, C…」の記号で表示され、ゲインの値は表示されません。</p>
+  </fieldset>
+
+  <button id="enter">VRを開始</button>
+  <button id="dl" class="secondary">ログをCSVで保存</button>
+  <div id="status">待機中。Quest 3 のブラウザで開いてください。</div>
+
+  <fieldset>
+    <legend>操作方法（右コントローラー）</legend>
+    <ul>
+      <li><b>Aボタン</b>：直立姿勢でのキャリブレーション（頭の高さを基準として記録）。各ブロックの開始前に押す</li>
+      <li><b>トリガー</b>：ブロックの開始／終了を切り替え（開始時に 3 回うなずいてもらうと、後で Cometa の記録と照合しやすい）</li>
+      <li><b>Bボタン</b>：次のブロックへ進む</li>
+    </ul>
+    <p class="muted">痛みの合図は Cometa 側（手に持ったIMUを叩く）で記録します。このページは視覚操作と、ブロック・条件・頭部姿勢の記録を担当します。</p>
+  </fieldset>
+</main>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const $ = id => document.getElementById(id);
+const status = msg => { $('status').textContent = msg; };
+
+// ---------- state ----------
+let gains = [], blockIdx = 0, running = false, y0 = null, t0 = performance.now();
+const LOG = []; // rows: t_ms, wall_iso, event, block, label, gain, headY, headZ, pitch_deg, drop_m, markerDrop_m
+const labelOf = i => String.fromCharCode(65 + i);
+
+// ---------- three.js scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+renderer.domElement.style.display = 'none';
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe8e6e1);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 50);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.2));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1, 3, 2); scene.add(dir);
+
+// floor + simple room (veridical, provides stable visual frame)
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshStandardMaterial({ color: 0xbfb8aa }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const grid = new THREE.GridHelper(8, 16, 0x8b8578, 0xa39d90); grid.position.y = 0.002; scene.add(grid);
+const wallMat = new THREE.MeshStandardMaterial({ color: 0xf2f0eb });
+const back = new THREE.Mesh(new THREE.PlaneGeometry(8, 3), wallMat); back.position.set(0, 1.5, -2.5); scene.add(back);
+
+// vertical rail with tick marks in front of participant
+const RAIL_Z = -0.9, RAIL_TOP = 1.5, RAIL_BOTTOM = 0.15;
+const rail = new THREE.Mesh(new THREE.BoxGeometry(0.03, RAIL_TOP - RAIL_BOTTOM, 0.03), new THREE.MeshStandardMaterial({ color: 0x4b5563 }));
+rail.position.set(0, (RAIL_TOP + RAIL_BOTTOM) / 2, RAIL_Z); scene.add(rail);
+for (let y = RAIL_BOTTOM; y <= RAIL_TOP + 1e-6; y += 0.1) {
+  const t = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.006, 0.01), new THREE.MeshStandardMaterial({ color: 0x6b7280 }));
+  t.position.set(0, y, RAIL_Z + 0.02); scene.add(t);
+}
+// moving marker (the only manipulated element)
+const marker = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.04, 0.04), new THREE.MeshStandardMaterial({ color: 0x1d4ed8, emissive: 0x0b1f66 }));
+marker.position.set(0, RAIL_TOP, RAIL_Z + 0.04); scene.add(marker);
+
+// block label sprite (code letter only)
+function makeLabel() {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
+  const tex = new THREE.CanvasTexture(cv);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  spr.scale.set(0.5, 0.25, 1); spr.position.set(0.45, 1.6, RAIL_Z);
+  spr.userData = { cv, tex }; scene.add(spr); return spr;
+}
+const label = makeLabel();
+function setLabel(text, color = '#1f2937') {
+  const { cv, tex } = label.userData; const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height); g.fillStyle = color; g.font = 'bold 64px sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 128, 64); tex.needsUpdate = true;
+}
+
+// ---------- logging ----------
+const iso = () => new Date().toISOString();
+function log(event, extra = {}) {
+  const p = new THREE.Vector3(), q = new THREE.Quaternion();
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  cam.getWorldPosition(p); cam.getWorldQuaternion(q);
+  const e = new THREE.Euler().setFromQuaternion(q, 'YXZ');
+  const drop = y0 == null ? null : (y0 - p.y);
+  LOG.push([ (performance.now() - t0).toFixed(1), iso(), event, blockIdx + 1, labelOf(blockIdx), gains[blockIdx] ?? '',
+    p.y.toFixed(4), p.z.toFixed(4), THREE.MathUtils.radToDeg(e.x).toFixed(2), drop == null ? '' : drop.toFixed(4),
+    extra.markerDrop == null ? '' : extra.markerDrop.toFixed(4) ]);
+}
+
+// ---------- controller input ----------
+const prev = {};
+function pressed(gp, i) { const now = !!gp.buttons[i]?.pressed; const was = prev[i]; prev[i] = now; return now && !was; }
+function pollInput() {
+  const session = renderer.xr.getSession(); if (!session) return;
+  for (const src of session.inputSources) {
+    if (src.handedness !== 'right' || !src.gamepad) continue;
+    const gp = src.gamepad;
+    if (pressed(gp, 4)) { // A
+      const p = new THREE.Vector3(); renderer.xr.getCamera().getWorldPosition(p); y0 = p.y;
+      log('calibrate'); setLabel(labelOf(blockIdx) + ' ✓');
+    }
+    if (pressed(gp, 0)) { // trigger
+      if (y0 == null) { setLabel('A:基準', '#b91c1c'); continue; }
+      running = !running; log(running ? 'block_start' : 'block_end');
+      setLabel(labelOf(blockIdx) + (running ? ' ●' : ''), running ? '#1d4ed8' : '#1f2937');
+    }
+    if (pressed(gp, 5)) { // B
+      if (running) { running = false; log('block_end'); }
+      blockIdx = Math.min(blockIdx + 1, gains.length - 1); y0 = null; log('next_block');
+      setLabel(labelOf(blockIdx));
+    }
+  }
+}
+
+// ---------- frame loop ----------
+let frame = 0;
+renderer.setAnimationLoop(() => {
+  pollInput();
+  const k = parseFloat($('k').value) || 1.0;
+  const g = gains[blockIdx] ?? 1.0;
+  let mDrop = 0;
+  if (y0 != null) {
+    const p = new THREE.Vector3(); renderer.xr.getCamera().getWorldPosition(p);
+    const drop = Math.max(0, y0 - p.y);
+    mDrop = Math.min(RAIL_TOP - RAIL_BOTTOM, g * k * drop);
+  }
+  marker.position.y = RAIL_TOP - mDrop;
+  if (running && (frame++ % 2 === 0)) log('frame', { markerDrop: mDrop }); // ~36 Hz at 72 Hz display
+  renderer.render(scene, camera);
+});
+
+// ---------- UI ----------
+$('enter').onclick = async () => {
+  gains = $('seq').value.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
+  if (!gains.length) { status('ゲイン順序を入力してください。'); return; }
+  if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-vr'))) {
+    status('このブラウザではVRを開始できません。Quest 3 のブラウザ（HTTPSのページ）で開いてください。'); return;
+  }
+  const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
+  await renderer.xr.setSession(session);
+  blockIdx = 0; y0 = null; t0 = performance.now(); LOG.length = 0;
+  log('session_start'); setLabel(labelOf(0));
+  status(`実行中：参加者 ${$('pid').value}、${gains.length} ブロック`);
+  session.addEventListener('end', () => { log('session_end'); status(`終了しました。記録 ${LOG.length} 行。「ログをCSVで保存」を押してください。`); });
+};
+
+$('dl').onclick = () => {
+  if (!LOG.length) { status('記録がありません。'); return; }
+  const head = ['t_ms','wall_clock_utc','event','block','block_label','gain','head_y_m','head_z_m','head_pitch_deg','head_drop_m','marker_drop_m'];
+  const meta = `# participant=${$('pid').value}; sequence=${gains.join('/')}; k=${$('k').value}; app=v0.1`;
+  const csv = [meta, head.join(','), ...LOG.map(r => r.join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `trunkgain_${$('pid').value}_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+  a.click();
+};
+</script>
+</body>
+</html>
