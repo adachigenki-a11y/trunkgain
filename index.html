@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trunk Gain VR（試作 v0.3）</title>
+<title>Trunk Gain VR（試作 v0.4）</title>
 <style>
   :root { --bg:#f7f7f5; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --accent:#1d4ed8; }
   body { margin:0; font-family: system-ui, "Noto Sans JP", sans-serif; background:var(--bg); color:var(--fg); }
@@ -18,10 +18,13 @@
   input[type=checkbox] { transform:scale(1.2); margin-right:6px; }
   button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:1rem; margin:6px 6px 6px 0; cursor:pointer; }
   button.secondary { background:#374151; }
+  button.small { padding:6px 12px; font-size:.85rem; }
   #status { white-space:pre-line; background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px; font-size:.85rem; min-height:3em; }
+  #order { background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:.85rem; overflow-wrap:anywhere; }
   #preview { width:100%; height:300px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#ddd; margin:10px 0; }
   #preview canvas { width:100% !important; height:100% !important; display:block; }
   #sim { width:100%; }
+  .manualonly { display:none; }
 </style>
 <script>
 window.addEventListener('error', e => { const el=document.getElementById('status'); if(el) el.textContent='エラー：'+(e.message||e.type)+'（'+(e.filename||'').split('/').pop()+':'+(e.lineno||'')+'）'; }, true);
@@ -30,47 +33,79 @@ window.addEventListener('unhandledrejection', e => { const el=document.getElemen
 </head>
 <body>
 <main>
-  <h1>体幹前屈ゲイン操作VR（試作 v0.3）</h1>
-  <p class="muted">参加者の視点は常に正確なまま（VR酔い対策）です。視界に固定したモニターに、横から見た姿勢と角度計を表示し、その角度だけをゲイン倍します。</p>
+  <h1>体幹前屈ゲイン操作VR（試作 v0.4）</h1>
+  <p class="muted">参加者の視点は常に正確なまま（VR酔い対策）です。視界に固定したモニターに、横から見た姿勢と角度計を表示し、その角度だけをゲイン倍します。各ブロックの後に、ずれに気づいたかをVR内で回答してもらいます。</p>
 
   <fieldset>
-    <legend>実験設定</legend>
+    <legend>参加者</legend>
     <label>参加者ID <input id="pid" type="text" value="P001"></label>
-    <label>ブロックのゲイン順序（カンマ区切り。例：1.0,0.8,1.2,1.0）
-      <input id="seq" type="text" value="1.0,0.8,1.2,1.0"></label>
+    <label>大転子の高さ（cm、床から。任意。入力すると下の「股関節の高さ比」より優先）
+      <input id="troch" type="number" step="0.5" placeholder="例：88"></label>
+    <label>股関節の高さ比（大転子高が未入力のときに使用。目の高さ＋0.11 mを身長とみなし、その何倍を股関節の高さとするか。通常0.52）
+      <input id="hipr" type="number" step="0.01" value="0.52"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>ブロックの順序</legend>
+    <label>順序の決め方
+      <select id="ordmode">
+        <option value="random" selected>ランダム（参加者IDから毎回同じ順序を再現）</option>
+        <option value="manual">手動で指定</option>
+      </select></label>
+    <div class="randonly">
+      <label>ゲインの段階（カンマ区切り）<input id="levels" type="text" value="0.6,0.8,1.0,1.2,1.4"></label>
+      <label>各ゲインの繰り返し回数 <input id="reps" type="number" min="1" max="6" value="2"></label>
+    </div>
+    <div class="manualonly">
+      <label>ゲインの順序（カンマ区切り）<input id="seq" type="text" value="1.0,0.8,1.2,1.0"></label>
+    </div>
+    <label><input id="practice" type="checkbox" checked>最初に練習ブロック（ゲイン1.0）を入れる</label>
+    <label><input id="ask" type="checkbox" checked>各ブロックの後にVR内で質問する</label>
+    <div id="order">（順序を表示します）</div>
+    <p class="muted">この順序は実験者用です。VR内のモニターには「ブロック 3/10」のように番号だけが出て、ゲインは表示されません。</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>表示</legend>
     <label>表示する内容
       <select id="mode">
         <option value="both" selected>姿勢（横から）＋角度計</option>
         <option value="figure">姿勢（横から）のみ</option>
         <option value="dial">角度計のみ</option>
       </select></label>
-    <label><input id="nums" type="checkbox" checked>角度計に数字（30°ごと）を表示する</label>
+    <label><input id="nums" type="checkbox">角度計に数字（30°ごと）を表示する</label>
     <label>モニターの位置（視線の下方向へのずれ。0＝正面、大きいほど下）
       <input id="mon" type="number" step="0.05" value="0.15"></label>
-    <label>股関節の高さ比（目の高さ＋0.11 mを身長とみなし、その何倍を股関節の高さとするか。通常0.52）
-      <input id="hipr" type="number" step="0.01" value="0.52"></label>
   </fieldset>
 
   <button id="enter">VRを開始</button>
   <button id="dl" class="secondary">ログをCSVで保存</button>
+  <button id="dl2" class="secondary">回答のまとめをCSVで保存</button>
+  <button id="restore" class="secondary small">前回の記録を読み込む</button>
   <div id="status">プログラムを読み込み中です…（この表示が変わらない場合は、部品の読み込みに失敗しています）</div>
 
   <fieldset>
     <legend>表示の確認（VRに入る前に）</legend>
-    <p class="muted">スライダーで前屈角度を動かすと、モニターの見え方を確認できます（ゲインは順序の1つ目を使用）。</p>
+    <p class="muted">スライダーで前屈角度を動かすと、モニターの見え方を確認できます（ゲインは下の値を使用）。</p>
     <label>前屈角度（シミュレーション）：<span id="simv">0</span>°
       <input id="sim" type="range" min="0" max="110" value="0"></label>
+    <label>確認用ゲイン：<span id="simgv">1.0</span>
+      <input id="simg" type="range" min="0.4" max="1.6" step="0.1" value="1.0" style="width:100%"></label>
+    <label><input id="simq" type="checkbox">質問画面を確認する</label>
     <div id="preview"></div>
   </fieldset>
 
   <fieldset>
     <legend>操作方法（右コントローラー）</legend>
     <ul>
-      <li><b>Aボタン</b>：直立姿勢でのキャリブレーション（頭の位置と向きを基準として記録）。各ブロックの開始前に押す</li>
-      <li><b>トリガー</b>：ブロックの記録を開始／終了（開始時に3回うなずくと Cometa の記録と照合しやすい）</li>
-      <li><b>Bボタン</b>：次のブロックへ進む</li>
+      <li><b>Aボタン</b>：直立姿勢でのキャリブレーション。各ブロックの開始前に押す</li>
+      <li><b>トリガー</b>：ブロックの記録を開始／終了（開始時に3回うなずくと Cometa の記録と照合しやすい）。終了すると質問画面になる</li>
+      <li><b>質問画面</b>：スティックを左右（または上下）に倒して選び、トリガーで決定。回答が終わると自動で次のブロックへ</li>
+      <li><b>Bボタン</b>：質問を飛ばして次のブロックへ進む（やり直しや中断用）</li>
     </ul>
-    <p class="muted">前屈角度は、直立時の頭の位置を基準に「股関節を中心に体幹が倒れた角度」として推定しています（頭部の前方移動量と、推定した股関節からの高さから計算）。腰椎角度の測定は Cometa のIMUで行ってください。</p>
+    <p class="muted">質問：①表示は実際の動きとずれていたか（はい／いいえ）→ ②「はい」のとき、表示は実際より大きいか小さいか → ③その回答への自信（0〜10）。<br>
+    前屈角度は、直立時の頭の位置を基準に「股関節を中心に体幹が倒れた角度」として推定しています。大転子高を使うときは、Quest の床の高さ設定が正しいことを確認してください。腰椎角度の測定は Cometa のIMUで行ってください。<br>
+    記録はブロックごとにこの端末内に自動で一時保存されます（ブラウザを閉じても「前回の記録を読み込む」で復元可能）。</p>
   </fieldset>
 </main>
 
@@ -80,14 +115,48 @@ window.addEventListener('unhandledrejection', e => { const el=document.getElemen
 <script type="module">
 import * as THREE from 'three';
 
+const APP = 'v0.4';
 const $ = id => document.getElementById(id);
 const status = msg => { $('status').textContent = msg; };
 
+// ---------- block plan ----------
+function hashStr(s) { let h = 2166136261 >>> 0; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; } return h; }
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const parseList = s => s.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
+function buildPlan() {
+  let seq;
+  if ($('ordmode').value === 'manual') seq = parseList($('seq').value);
+  else {
+    const levels = parseList($('levels').value), reps = Math.max(1, parseInt($('reps').value) || 1);
+    const base = []; for (let r = 0; r < reps; r++) base.push(...levels);
+    const rnd = mulberry32(hashStr('trunkgain|' + $('pid').value.trim()));
+    for (let tries = 0; tries < 200; tries++) {
+      seq = base.slice();
+      for (let i = seq.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [seq[i], seq[j]] = [seq[j], seq[i]]; }
+      if (seq.every((v, i) => i === 0 || v !== seq[i - 1])) break;   // avoid the same gain twice in a row
+    }
+  }
+  const plan = seq.map((g, i) => ({ gain: g, label: 'B' + (i + 1), practice: false }));
+  if ($('practice').checked) plan.unshift({ gain: 1.0, label: 'P', practice: true });
+  return plan;
+}
+function showPlan() {
+  const p = buildPlan();
+  $('order').textContent = p.length ? p.map(b => `${b.label}:${b.gain.toFixed(2)}`).join('  ') + `　（全${p.length}ブロック）` : 'ゲインを入力してください';
+  document.querySelectorAll('.randonly').forEach(e => e.style.display = $('ordmode').value === 'random' ? '' : 'none');
+  document.querySelectorAll('.manualonly').forEach(e => e.style.display = $('ordmode').value === 'manual' ? 'block' : 'none');
+}
+['pid','ordmode','levels','reps','seq','practice'].forEach(id => $(id).addEventListener('input', showPlan));
+$('ordmode').addEventListener('change', showPlan);
+showPlan();
+
 // ---------- state ----------
-let gains = [], blockIdx = 0, running = false, calib = null, t0 = performance.now();
-const LOG = [];
-const labelOf = i => String.fromCharCode(65 + i);
-const readGains = () => $('seq').value.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
+let plan = [], blockIdx = 0, running = false, calib = null, t0 = performance.now(), finished = false;
+let blockStats = null;               // {startT, peakEst, peakDisp}
+let Q = null;                        // questionnaire state
+const LOG = [], RESP = [];
+const cur = () => plan[blockIdx] || { gain: 1.0, label: '-', practice: false };
+const blockName = () => !plan.length ? '確認用' : cur().practice ? '練習' : `ブロック ${blockIdx + (plan[0]?.practice ? 0 : 1)}/${plan.filter(b => !b.practice).length}`;
 
 // ---------- renderer / scene ----------
 const PV = $('preview');
@@ -102,18 +171,16 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe8e6e1);
 const camera = new THREE.PerspectiveCamera(70, (PV.clientWidth || 760) / (PV.clientHeight || 300), 0.05, 50);
 camera.position.set(0, 1.6, 0);
-scene.add(camera); // children of the camera follow the head in VR
+scene.add(camera);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.2));
 const dl = new THREE.DirectionalLight(0xffffff, 0.8); dl.position.set(1, 3, 2); scene.add(dl);
-
-// simple veridical room
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshStandardMaterial({ color: 0xbfb8aa }));
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
 const grid = new THREE.GridHelper(8, 16, 0x8b8578, 0xa39d90); grid.position.y = 0.002; scene.add(grid);
 const wall = new THREE.Mesh(new THREE.PlaneGeometry(8, 3), new THREE.MeshStandardMaterial({ color: 0xf2f0eb }));
 wall.position.set(0, 1.5, -2.5); scene.add(wall);
 
-// ---------- head-locked monitor (canvas texture) ----------
+// ---------- head-locked monitor ----------
 const CW = 1024, CH = 640;
 const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
 const ctx = cv.getContext('2d');
@@ -125,60 +192,91 @@ camera.add(monitor);
 function placeMonitor() { monitor.position.set(0, -(parseFloat($('mon').value) || 0), -0.75); }
 placeMonitor();
 
-function drawMonitor(dispDeg, blockText, recording) {
-  const mode = $('mode').value, showNums = $('nums').checked;
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function panel() {
   ctx.clearRect(0, 0, CW, CH);
-  // panel
   ctx.fillStyle = 'rgba(250,250,248,0.96)'; roundRect(8, 8, CW - 16, CH - 16, 28); ctx.fill();
   ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 4; ctx.stroke();
-  // block label
-  ctx.fillStyle = recording ? '#1d4ed8' : '#374151'; ctx.font = 'bold 44px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  ctx.fillText(blockText, 36, 28);
+}
+function header(text, color) {
+  ctx.fillStyle = color; ctx.font = 'bold 44px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(text, 36, 28);
+}
+function drawMonitor(dispDeg, headText, recording) {
+  const mode = $('mode').value, showNums = $('nums').checked;
+  panel(); header(headText, recording ? '#1d4ed8' : '#374151');
   const both = mode === 'both';
   if (mode === 'both' || mode === 'figure') drawFigure(both ? 270 : CW / 2, 360, dispDeg, both ? 1 : 1.25);
   if (mode === 'both' || mode === 'dial') drawDial(both ? 760 : CW / 2, 360, both ? 210 : 250, dispDeg, showNums);
   tex.needsUpdate = true;
 }
-function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function drawMessage(lines) {
+  panel(); ctx.fillStyle = '#111827'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => { ctx.font = (i === 0 ? 'bold 56px' : '40px') + ' sans-serif'; ctx.fillText(l, CW / 2, CH / 2 - (lines.length - 1) * 40 + i * 80); });
+  tex.needsUpdate = true;
+}
 
-// side-view stick figure, facing right; trunk rotates about the hip
+// questionnaire screens
+const DIRS = ['実際より大きく見えた', '実際より小さく見えた', 'わからない'];
+function drawQuestion(q) {
+  panel(); header(blockName() + '　質問', '#374151');
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#111827';
+  const opt = (txt, x, y, w, h, on) => {
+    ctx.fillStyle = on ? '#1d4ed8' : '#e5e7eb'; roundRect(x - w / 2, y - h / 2, w, h, 18); ctx.fill();
+    ctx.fillStyle = on ? '#ffffff' : '#111827'; ctx.font = 'bold 44px sans-serif'; ctx.fillText(txt, x, y);
+  };
+  if (q.step === 'detect') {
+    ctx.font = 'bold 46px sans-serif'; ctx.fillText('モニターの表示は、実際の体の動きと', CW / 2, 170);
+    ctx.fillText('ずれていましたか？', CW / 2, 235);
+    opt('はい', CW / 2 - 190, 400, 300, 120, q.sel === 0);
+    opt('いいえ', CW / 2 + 190, 400, 300, 120, q.sel === 1);
+  } else if (q.step === 'dir') {
+    ctx.font = 'bold 46px sans-serif'; ctx.fillText('表示の曲がり方は、実際と比べて', CW / 2, 150);
+    DIRS.forEach((d, i) => opt(d, CW / 2, 270 + i * 110, 620, 90, q.sel === i));
+  } else if (q.step === 'conf') {
+    ctx.font = 'bold 46px sans-serif'; ctx.fillText('いまの答えに、どのくらい自信がありますか？', CW / 2, 170);
+    const x0 = 140, x1 = CW - 140, y = 360, step = (x1 - x0) / 10;
+    ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    for (let i = 0; i <= 10; i++) {
+      const x = x0 + i * step, on = i === q.conf;
+      ctx.fillStyle = on ? '#1d4ed8' : '#ffffff'; ctx.strokeStyle = '#374151'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(x, y, on ? 30 : 18, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#111827'; ctx.font = (on ? 'bold 44px' : '32px') + ' sans-serif'; ctx.fillText(String(i), x, y + 70);
+    }
+    ctx.font = '34px sans-serif'; ctx.fillStyle = '#4b5563';
+    ctx.textAlign = 'left'; ctx.fillText('全く自信がない', x0 - 40, y - 70);
+    ctx.textAlign = 'right'; ctx.fillText('完全に自信がある', x1 + 40, y - 70);
+  }
+  ctx.textAlign = 'center'; ctx.fillStyle = '#6b7280'; ctx.font = '32px sans-serif';
+  ctx.fillText('スティックで選び、トリガーで決定', CW / 2, CH - 60);
+  tex.needsUpdate = true;
+}
+
 function drawFigure(cx, cy, deg, s) {
   const hipX = cx - 40 * s, hipY = cy + 10 * s, legL = 200 * s, trunkL = 190 * s, headR = 30 * s;
-  // ground
   ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(cx - 190 * s, hipY + legL + 8); ctx.lineTo(cx + 200 * s, hipY + legL + 8); ctx.stroke();
-  // ghost upright trunk
   ctx.strokeStyle = 'rgba(107,114,128,0.35)'; ctx.lineWidth = 14 * s; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(hipX, hipY - trunkL); ctx.stroke();
-  // legs
   ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 16 * s;
   ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(hipX, hipY + legL); ctx.lineTo(hipX + 30 * s, hipY + legL); ctx.stroke();
-  // trunk at displayed angle
   const a = THREE.MathUtils.degToRad(deg);
   const sx = hipX + Math.sin(a) * trunkL, sy = hipY - Math.cos(a) * trunkL;
   ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 18 * s;
   ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(sx, sy); ctx.stroke();
-  // arm hanging
   ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 10 * s;
   const shx = hipX + Math.sin(a) * trunkL * 0.85, shy = hipY - Math.cos(a) * trunkL * 0.85;
   ctx.beginPath(); ctx.moveTo(shx, shy); ctx.lineTo(shx + 10 * s, shy + 150 * s); ctx.stroke();
-  // head
   const hx = hipX + Math.sin(a) * (trunkL + headR + 6 * s), hy = hipY - Math.cos(a) * (trunkL + headR + 6 * s);
   ctx.fillStyle = '#1d4ed8'; ctx.beginPath(); ctx.arc(hx, hy, headR, 0, Math.PI * 2); ctx.fill();
-  // pelvis dot
   ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(hipX, hipY, 9 * s, 0, Math.PI * 2); ctx.fill();
 }
-
-// clock-like goniometer dial: 0° at 12 o'clock, clockwise (forward)
 function drawDial(cx, cy, r, deg, showNums) {
   const MAX = 120, start = -Math.PI / 2;
   const ang = d => start + THREE.MathUtils.degToRad(d);
   ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#374151'; ctx.lineWidth = 6; ctx.stroke();
-  // scale arc
   ctx.strokeStyle = '#d1d5db'; ctx.lineWidth = 16; ctx.beginPath(); ctx.arc(cx, cy, r * 0.82, ang(0), ang(MAX)); ctx.stroke();
-  // filled arc up to current
   ctx.strokeStyle = '#93c5fd'; ctx.beginPath(); ctx.arc(cx, cy, r * 0.82, ang(0), ang(Math.min(deg, MAX))); ctx.stroke();
-  // ticks
   for (let d = 0; d <= MAX; d += 10) {
     const major = d % 30 === 0, t = ang(d), r1 = r * (major ? 0.66 : 0.72), r2 = r * 0.92;
     ctx.strokeStyle = '#374151'; ctx.lineWidth = major ? 6 : 3;
@@ -188,7 +286,6 @@ function drawDial(cx, cy, r, deg, showNums) {
       ctx.fillText(String(d), cx + Math.cos(t) * r * 0.5, cy + Math.sin(t) * r * 0.5);
     }
   }
-  // needle
   const t = ang(Math.max(0, Math.min(deg, MAX + 10)));
   ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 9; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(cx - Math.cos(t) * r * 0.12, cy - Math.sin(t) * r * 0.12); ctx.lineTo(cx + Math.cos(t) * r * 0.86, cy + Math.sin(t) * r * 0.86); ctx.stroke();
@@ -203,48 +300,99 @@ function headPose() {
   const e = new THREE.Euler().setFromQuaternion(tmpQ, 'YXZ');
   return { p: tmpP.clone(), yaw: e.y, pitch: e.x };
 }
+function hipHeight(headY) {
+  const tr = parseFloat($('troch').value);
+  if (tr > 0) return { y: tr / 100, src: 'trochanter' };
+  return { y: (parseFloat($('hipr').value) || 0.52) * (headY + 0.11), src: 'ratio' };
+}
 function calibrate() {
-  const h = headPose();
-  const hipr = parseFloat($('hipr').value) || 0.52;
-  const hipY = hipr * (h.p.y + 0.11);
-  calib = { p0: h.p, yaw0: h.yaw, hipY, fwd: new THREE.Vector3(-Math.sin(h.yaw), 0, -Math.cos(h.yaw)) };
+  const h = headPose(), hip = hipHeight(h.p.y);
+  calib = { p0: h.p, yaw0: h.yaw, hipY: hip.y, hipSrc: hip.src, fwd: new THREE.Vector3(-Math.sin(h.yaw), 0, -Math.cos(h.yaw)) };
 }
 function flexionDeg() {
   if (!calib) return 0;
   const h = headPose();
-  const d = h.p.clone().sub(calib.p0).dot(calib.fwd);          // forward displacement of head
-  const up = h.p.y - calib.hipY;                                 // head height above estimated hip
-  const deg = THREE.MathUtils.radToDeg(Math.atan2(Math.max(0, d), up));
-  return Math.max(0, deg);
+  const d = h.p.clone().sub(calib.p0).dot(calib.fwd);
+  const up = h.p.y - calib.hipY;
+  return Math.max(0, THREE.MathUtils.radToDeg(Math.atan2(Math.max(0, d), up)));
 }
 
 // ---------- logging ----------
+const HEAD = ['t_ms','wall_clock_utc','event','block_no','block_label','practice','gain','head_x_m','head_y_m','head_z_m','head_pitch_deg','est_flexion_deg','displayed_deg','hip_y_m','q_detect','q_direction','q_confidence'];
 function log(event, extra = {}) {
-  const h = headPose();
-  LOG.push([(performance.now() - t0).toFixed(1), new Date().toISOString(), event, blockIdx + 1, labelOf(blockIdx), gains[blockIdx] ?? '',
+  const h = headPose(), b = cur();
+  LOG.push([(performance.now() - t0).toFixed(1), new Date().toISOString(), event, blockIdx + 1, b.label, b.practice ? 1 : 0, b.gain,
     h.p.x.toFixed(4), h.p.y.toFixed(4), h.p.z.toFixed(4), THREE.MathUtils.radToDeg(h.pitch).toFixed(2),
-    extra.est == null ? '' : extra.est.toFixed(2), extra.disp == null ? '' : extra.disp.toFixed(2)]);
+    extra.est == null ? '' : extra.est.toFixed(2), extra.disp == null ? '' : extra.disp.toFixed(2),
+    calib ? calib.hipY.toFixed(3) : '', extra.detect ?? '', extra.dir ?? '', extra.conf ?? '']);
+}
+const metaLine = () => `# participant=${$('pid').value}; plan=${plan.map(b => b.label + ':' + b.gain).join('/')}; order_mode=${$('ordmode').value}; mode=${$('mode').value}; numbers=${$('nums').checked}; trochanter_cm=${$('troch').value || 'NA'}; hip_ratio=${$('hipr').value}; monitor=${$('mon').value}; app=${APP}`;
+function autosave() {
+  try { localStorage.setItem('trunkgain_last', JSON.stringify({ pid: $('pid').value, meta: metaLine(), LOG, RESP, saved: new Date().toISOString() })); }
+  catch (e) { /* storage may be full or unavailable; the in-memory log is still intact */ }
+}
+
+// ---------- block flow ----------
+function startBlock() { running = true; blockStats = { startT: performance.now(), peakEst: 0, peakDisp: 0 }; log('block_start'); }
+function endBlock() {
+  running = false; log('block_end');
+  if ($('ask').checked) Q = { step: 'detect', sel: Math.random() < 0.5 ? 0 : 1, detect: null, dir: null, conf: 5 };   // random initial cursor avoids a default-answer bias
+  else { recordResponse(); nextBlock(); }
+}
+function recordResponse() {
+  const b = cur(), s = blockStats || { startT: performance.now(), peakEst: 0, peakDisp: 0 };
+  const r = { pid: $('pid').value, block_no: blockIdx + 1, label: b.label, practice: b.practice ? 1 : 0, gain: b.gain,
+    duration_s: ((performance.now() - s.startT) / 1000).toFixed(1), peak_est_deg: s.peakEst.toFixed(1), peak_disp_deg: s.peakDisp.toFixed(1),
+    detect: Q ? Q.detect : '', direction: Q ? (Q.dir ?? '') : '', confidence: Q ? Q.conf : '' };
+  RESP.push(r);
+  if (Q) log('response', { detect: Q.detect, dir: Q.dir ?? '', conf: Q.conf });
+  autosave();
+}
+function nextBlock() {
+  Q = null; calib = null; blockStats = null;
+  if (blockIdx >= plan.length - 1) { finished = true; log('sequence_end'); autosave(); return; }
+  blockIdx++; log('next_block');
 }
 
 // ---------- controller input ----------
-const prev = {};
+const prev = {}; let stickHeld = false;
 function pressed(gp, i) { const now = !!gp.buttons[i]?.pressed; const was = prev[i]; prev[i] = now; return now && !was; }
-let blockText = 'A';
+function stickStep(gp) {   // +1 = right/down, -1 = left/up, edge-triggered
+  const ax = gp.axes || [], x = ax[2] ?? ax[0] ?? 0, y = ax[3] ?? ax[1] ?? 0;
+  const v = Math.abs(x) > Math.abs(y) ? x : y;
+  if (Math.abs(v) < 0.6) { stickHeld = false; return 0; }
+  if (stickHeld) return 0; stickHeld = true; return v > 0 ? 1 : -1;
+}
+let hint = '';
 function pollInput() {
   const session = renderer.xr.getSession(); if (!session) return;
   for (const src of session.inputSources) {
     if (src.handedness !== 'right' || !src.gamepad) continue;
     const gp = src.gamepad;
-    if (pressed(gp, 4)) { calibrate(); log('calibrate'); blockText = labelOf(blockIdx) + ' ✓'; }
+    if (finished) { pressed(gp, 0); pressed(gp, 4); pressed(gp, 5); continue; }
+    if (Q) {                                   // questionnaire mode
+      const st = stickStep(gp);
+      if (Q.step === 'detect' && st) Q.sel = Q.sel ? 0 : 1;
+      if (Q.step === 'dir' && st) Q.sel = (Q.sel + st + DIRS.length) % DIRS.length;
+      if (Q.step === 'conf' && st) Q.conf = Math.max(0, Math.min(10, Q.conf + st));
+      if (pressed(gp, 0)) {
+        if (Q.step === 'detect') { Q.detect = Q.sel === 0 ? 'yes' : 'no'; Q.step = Q.detect === 'yes' ? 'dir' : 'conf'; Q.sel = 2; }
+        else if (Q.step === 'dir') { Q.dir = ['larger', 'smaller', 'unsure'][Q.sel]; Q.step = 'conf'; }
+        else if (Q.step === 'conf') { recordResponse(); nextBlock(); }
+      }
+      if (pressed(gp, 5)) { log('question_skipped'); Q = null; recordResponse(); nextBlock(); }
+      pressed(gp, 4);
+      continue;
+    }
+    if (pressed(gp, 4)) { if (!running) { calibrate(); log('calibrate'); hint = ' ✓'; } }
     if (pressed(gp, 0)) {
-      if (!calib) { blockText = labelOf(blockIdx) + '：Aボタンで基準'; continue; }
-      running = !running; log(running ? 'block_start' : 'block_end');
-      blockText = labelOf(blockIdx) + (running ? ' ● 記録中' : ' ✓');
+      if (!calib) hint = '：Aボタンで基準';
+      else if (!running) { startBlock(); hint = ' ● 記録中'; }
+      else { endBlock(); hint = ''; }
     }
     if (pressed(gp, 5)) {
       if (running) { running = false; log('block_end'); }
-      blockIdx = Math.min(blockIdx + 1, gains.length - 1); calib = null; log('next_block');
-      blockText = labelOf(blockIdx);
+      log('block_skipped'); recordResponse(); nextBlock(); hint = '';
     }
   }
 }
@@ -252,13 +400,22 @@ function pollInput() {
 // ---------- loop ----------
 let frame = 0, loopErr = false;
 renderer.setAnimationLoop(() => { try {
-  pollInput();
-  let est, g;
-  if (renderer.xr.isPresenting) { est = flexionDeg(); g = gains[blockIdx] ?? 1.0; }
-  else { est = parseFloat($('sim').value); g = readGains()[0] ?? 1.0; blockText = '確認用'; }
-  const disp = g * est;
-  drawMonitor(disp, blockText, running);
-  if (running && (frame++ % 2 === 0)) log('frame', { est, disp });
+  if (renderer.xr.isPresenting) {
+    pollInput();
+    if (finished) drawMessage(['終了しました', 'ヘッドセットを外してください']);
+    else if (Q) drawQuestion(Q);
+    else {
+      const est = flexionDeg(), disp = cur().gain * est;
+      drawMonitor(disp, blockName() + hint, running);
+      if (running) {
+        blockStats.peakEst = Math.max(blockStats.peakEst, est); blockStats.peakDisp = Math.max(blockStats.peakDisp, disp);
+        if (frame++ % 2 === 0) log('frame', { est, disp });
+      }
+    }
+  } else {
+    if ($('simq').checked) drawQuestion({ step: 'detect', sel: 0 });
+    else drawMonitor(parseFloat($('simg').value) * parseFloat($('sim').value), '確認用', false);
+  }
   renderer.render(scene, camera);
 } catch (err) {
   if (!loopErr) { loopErr = true; status('描画中のエラー：' + err.message); }
@@ -267,12 +424,13 @@ status('準備完了。Quest 3 で「VRを開始」を押してください。')
 
 // ---------- UI ----------
 $('sim').oninput = () => { $('simv').textContent = $('sim').value; };
+$('simg').oninput = () => { $('simgv').textContent = parseFloat($('simg').value).toFixed(1); };
 $('mon').oninput = placeMonitor;
-camera.lookAt(0, 1.6 - 0.15, -1); // preview faces the monitor
+camera.lookAt(0, 1.6 - 0.15, -1);
 
 $('enter').onclick = async () => {
-  gains = readGains();
-  if (!gains.length) { status('ゲイン順序を入力してください。'); return; }
+  plan = buildPlan();
+  if (!plan.length) { status('ゲインを入力してください。'); return; }
   if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-vr'))) {
     status('このブラウザではVRを開始できません。Quest 3 のブラウザ（HTTPSのページ）で開いてください。'); return;
   }
@@ -281,21 +439,38 @@ $('enter').onclick = async () => {
     session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
     await renderer.xr.setSession(session);
   } catch (err) { status('VRの開始に失敗しました：' + err.message); return; }
-  blockIdx = 0; calib = null; running = false; t0 = performance.now(); LOG.length = 0; blockText = 'A';
+  blockIdx = 0; calib = null; running = false; finished = false; Q = null; hint = ''; restoredMeta = null;
+  t0 = performance.now(); LOG.length = 0; RESP.length = 0;
   log('session_start');
-  status(`実行中：参加者 ${$('pid').value}、${gains.length} ブロック`);
-  session.addEventListener('end', () => { log('session_end'); status(`終了しました。記録 ${LOG.length} 行。「ログをCSVで保存」を押してください。`); });
+  status(`実行中：参加者 ${$('pid').value}、${plan.length} ブロック`);
+  session.addEventListener('end', () => {
+    if (running) { running = false; log('block_end'); }
+    log('session_end'); autosave();
+    status(`終了しました。記録 ${LOG.length} 行、回答 ${RESP.length} 件。「ログをCSVで保存」と「回答のまとめをCSVで保存」を押してください。`);
+  });
 };
 
+function download(text, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  a.download = name; a.click();
+}
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+let restoredMeta = null;
 $('dl').onclick = () => {
   if (!LOG.length) { status('記録がありません。'); return; }
-  const head = ['t_ms','wall_clock_utc','event','block','block_label','gain','head_x_m','head_y_m','head_z_m','head_pitch_deg','est_flexion_deg','displayed_deg'];
-  const meta = `# participant=${$('pid').value}; sequence=${gains.join('/')}; mode=${$('mode').value}; numbers=${$('nums').checked}; hip_ratio=${$('hipr').value}; app=v0.3`;
-  const csv = [meta, head.join(','), ...LOG.map(r => r.join(','))].join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = `trunkgain_${$('pid').value}_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
-  a.click();
+  download([restoredMeta || metaLine(), HEAD.join(','), ...LOG.map(r => r.join(','))].join('\n'), `trunkgain_${$('pid').value}_${stamp()}_log.csv`);
+};
+$('dl2').onclick = () => {
+  if (!RESP.length) { status('回答がありません。'); return; }
+  const cols = ['pid','block_no','label','practice','gain','duration_s','peak_est_deg','peak_disp_deg','detect','direction','confidence'];
+  download([restoredMeta || metaLine(), cols.join(','), ...RESP.map(r => cols.map(c => r[c]).join(','))].join('\n'), `trunkgain_${$('pid').value}_${stamp()}_responses.csv`);
+};
+$('restore').onclick = () => {
+  let d = null; try { d = JSON.parse(localStorage.getItem('trunkgain_last') || 'null'); } catch (e) {}
+  if (!d) { status('この端末に保存された記録はありません。'); return; }
+  LOG.length = 0; LOG.push(...d.LOG); RESP.length = 0; RESP.push(...d.RESP); restoredMeta = d.meta; $('pid').value = d.pid;
+  status(`前回の記録を読み込みました（参加者 ${d.pid}、${d.saved} 保存、記録 ${LOG.length} 行、回答 ${RESP.length} 件）。CSVで保存できます。`);
 };
 </script>
 </body>
