@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trunk Gain VR（試作 v0.1）</title>
+<title>Trunk Gain VR（試作 v0.3）</title>
 <style>
   :root { --bg:#f7f7f5; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --accent:#1d4ed8; }
   body { margin:0; font-family: system-ui, "Noto Sans JP", sans-serif; background:var(--bg); color:var(--fg); }
@@ -14,46 +14,68 @@
   fieldset { border:1px solid var(--line); border-radius:8px; margin:14px 0; padding:10px 14px; }
   legend { font-weight:700; font-size:.9rem; }
   label { display:block; margin:6px 0; font-size:.9rem; }
-  input[type=text], input[type=number] { width:100%; max-width:420px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:.95rem; }
+  input[type=text], input[type=number], select { width:100%; max-width:420px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:.95rem; box-sizing:border-box; }
+  input[type=checkbox] { transform:scale(1.2); margin-right:6px; }
   button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:1rem; margin:6px 6px 6px 0; cursor:pointer; }
   button.secondary { background:#374151; }
   #status { white-space:pre-line; background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px; font-size:.85rem; min-height:3em; }
-  code { background:#eef2ff; padding:1px 4px; border-radius:4px; }
+  #preview { width:100%; height:300px; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#ddd; margin:10px 0; }
+  #preview canvas { width:100% !important; height:100% !important; display:block; }
+  #sim { width:100%; }
 </style>
+<script>
+window.addEventListener('error', e => { const el=document.getElementById('status'); if(el) el.textContent='エラー：'+(e.message||e.type)+'（'+(e.filename||'').split('/').pop()+':'+(e.lineno||'')+'）'; }, true);
+window.addEventListener('unhandledrejection', e => { const el=document.getElementById('status'); if(el) el.textContent='エラー：'+(e.reason && e.reason.message || e.reason); });
+</script>
 </head>
 <body>
 <main>
-  <h1>体幹前屈ゲイン操作VR（試作 v0.1）</h1>
-  <p class="muted">Meta Quest 3 のブラウザで開いて使用します。参加者の視点は常に正確なまま（VR酔い対策）で、前屈量を示す目標物の動きだけをゲイン倍します。</p>
+  <h1>体幹前屈ゲイン操作VR（試作 v0.3）</h1>
+  <p class="muted">参加者の視点は常に正確なまま（VR酔い対策）です。視界に固定したモニターに、横から見た姿勢と角度計を表示し、その角度だけをゲイン倍します。</p>
 
   <fieldset>
     <legend>実験設定</legend>
     <label>参加者ID <input id="pid" type="text" value="P001"></label>
     <label>ブロックのゲイン順序（カンマ区切り。例：1.0,0.8,1.2,1.0）
       <input id="seq" type="text" value="1.0,0.8,1.2,1.0"></label>
-    <label>目標物の移動倍率 k（頭部の下降量1 cmあたりの目標物の移動量。基本は1.0）
-      <input id="k" type="number" step="0.1" value="1.0"></label>
-    <p class="muted">ブロックは参加者には「A, B, C…」の記号で表示され、ゲインの値は表示されません。</p>
+    <label>表示する内容
+      <select id="mode">
+        <option value="both" selected>姿勢（横から）＋角度計</option>
+        <option value="figure">姿勢（横から）のみ</option>
+        <option value="dial">角度計のみ</option>
+      </select></label>
+    <label><input id="nums" type="checkbox" checked>角度計に数字（30°ごと）を表示する</label>
+    <label>モニターの位置（視線の下方向へのずれ。0＝正面、大きいほど下）
+      <input id="mon" type="number" step="0.05" value="0.15"></label>
+    <label>股関節の高さ比（目の高さ＋0.11 mを身長とみなし、その何倍を股関節の高さとするか。通常0.52）
+      <input id="hipr" type="number" step="0.01" value="0.52"></label>
   </fieldset>
 
   <button id="enter">VRを開始</button>
   <button id="dl" class="secondary">ログをCSVで保存</button>
-  <div id="status">待機中。Quest 3 のブラウザで開いてください。</div>
+  <div id="status">プログラムを読み込み中です…（この表示が変わらない場合は、部品の読み込みに失敗しています）</div>
+
+  <fieldset>
+    <legend>表示の確認（VRに入る前に）</legend>
+    <p class="muted">スライダーで前屈角度を動かすと、モニターの見え方を確認できます（ゲインは順序の1つ目を使用）。</p>
+    <label>前屈角度（シミュレーション）：<span id="simv">0</span>°
+      <input id="sim" type="range" min="0" max="110" value="0"></label>
+    <div id="preview"></div>
+  </fieldset>
 
   <fieldset>
     <legend>操作方法（右コントローラー）</legend>
     <ul>
-      <li><b>Aボタン</b>：直立姿勢でのキャリブレーション（頭の高さを基準として記録）。各ブロックの開始前に押す</li>
-      <li><b>トリガー</b>：ブロックの開始／終了を切り替え（開始時に 3 回うなずいてもらうと、後で Cometa の記録と照合しやすい）</li>
+      <li><b>Aボタン</b>：直立姿勢でのキャリブレーション（頭の位置と向きを基準として記録）。各ブロックの開始前に押す</li>
+      <li><b>トリガー</b>：ブロックの記録を開始／終了（開始時に3回うなずくと Cometa の記録と照合しやすい）</li>
       <li><b>Bボタン</b>：次のブロックへ進む</li>
     </ul>
-    <p class="muted">痛みの合図は Cometa 側（手に持ったIMUを叩く）で記録します。このページは視覚操作と、ブロック・条件・頭部姿勢の記録を担当します。</p>
+    <p class="muted">前屈角度は、直立時の頭の位置を基準に「股関節を中心に体幹が倒れた角度」として推定しています（頭部の前方移動量と、推定した股関節からの高さから計算）。腰椎角度の測定は Cometa のIMUで行ってください。</p>
   </fieldset>
 </main>
 
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
 <script type="module">
 import * as THREE from 'three';
@@ -62,133 +84,213 @@ const $ = id => document.getElementById(id);
 const status = msg => { $('status').textContent = msg; };
 
 // ---------- state ----------
-let gains = [], blockIdx = 0, running = false, y0 = null, t0 = performance.now();
-const LOG = []; // rows: t_ms, wall_iso, event, block, label, gain, headY, headZ, pitch_deg, drop_m, markerDrop_m
+let gains = [], blockIdx = 0, running = false, calib = null, t0 = performance.now();
+const LOG = [];
 const labelOf = i => String.fromCharCode(65 + i);
+const readGains = () => $('seq').value.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
 
-// ---------- three.js scene ----------
+// ---------- renderer / scene ----------
+const PV = $('preview');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setSize(PV.clientWidth || 760, PV.clientHeight || 300);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
-renderer.domElement.style.display = 'none';
-document.body.appendChild(renderer.domElement);
+PV.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe8e6e1);
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 50);
+const camera = new THREE.PerspectiveCamera(70, (PV.clientWidth || 760) / (PV.clientHeight || 300), 0.05, 50);
+camera.position.set(0, 1.6, 0);
+scene.add(camera); // children of the camera follow the head in VR
 scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.2));
-const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1, 3, 2); scene.add(dir);
+const dl = new THREE.DirectionalLight(0xffffff, 0.8); dl.position.set(1, 3, 2); scene.add(dl);
 
-// floor + simple room (veridical, provides stable visual frame)
+// simple veridical room
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshStandardMaterial({ color: 0xbfb8aa }));
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
 const grid = new THREE.GridHelper(8, 16, 0x8b8578, 0xa39d90); grid.position.y = 0.002; scene.add(grid);
-const wallMat = new THREE.MeshStandardMaterial({ color: 0xf2f0eb });
-const back = new THREE.Mesh(new THREE.PlaneGeometry(8, 3), wallMat); back.position.set(0, 1.5, -2.5); scene.add(back);
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(8, 3), new THREE.MeshStandardMaterial({ color: 0xf2f0eb }));
+wall.position.set(0, 1.5, -2.5); scene.add(wall);
 
-// vertical rail with tick marks in front of participant
-const RAIL_Z = -0.9, RAIL_TOP = 1.5, RAIL_BOTTOM = 0.15;
-const rail = new THREE.Mesh(new THREE.BoxGeometry(0.03, RAIL_TOP - RAIL_BOTTOM, 0.03), new THREE.MeshStandardMaterial({ color: 0x4b5563 }));
-rail.position.set(0, (RAIL_TOP + RAIL_BOTTOM) / 2, RAIL_Z); scene.add(rail);
-for (let y = RAIL_BOTTOM; y <= RAIL_TOP + 1e-6; y += 0.1) {
-  const t = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.006, 0.01), new THREE.MeshStandardMaterial({ color: 0x6b7280 }));
-  t.position.set(0, y, RAIL_Z + 0.02); scene.add(t);
-}
-// moving marker (the only manipulated element)
-const marker = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.04, 0.04), new THREE.MeshStandardMaterial({ color: 0x1d4ed8, emissive: 0x0b1f66 }));
-marker.position.set(0, RAIL_TOP, RAIL_Z + 0.04); scene.add(marker);
+// ---------- head-locked monitor (canvas texture) ----------
+const CW = 1024, CH = 640;
+const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
+const ctx = cv.getContext('2d');
+const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+const monitor = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.40),
+  new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
+monitor.renderOrder = 10;
+camera.add(monitor);
+function placeMonitor() { monitor.position.set(0, -(parseFloat($('mon').value) || 0), -0.75); }
+placeMonitor();
 
-// block label sprite (code letter only)
-function makeLabel() {
-  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
-  const tex = new THREE.CanvasTexture(cv);
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-  spr.scale.set(0.5, 0.25, 1); spr.position.set(0.45, 1.6, RAIL_Z);
-  spr.userData = { cv, tex }; scene.add(spr); return spr;
+function drawMonitor(dispDeg, blockText, recording) {
+  const mode = $('mode').value, showNums = $('nums').checked;
+  ctx.clearRect(0, 0, CW, CH);
+  // panel
+  ctx.fillStyle = 'rgba(250,250,248,0.96)'; roundRect(8, 8, CW - 16, CH - 16, 28); ctx.fill();
+  ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 4; ctx.stroke();
+  // block label
+  ctx.fillStyle = recording ? '#1d4ed8' : '#374151'; ctx.font = 'bold 44px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(blockText, 36, 28);
+  const both = mode === 'both';
+  if (mode === 'both' || mode === 'figure') drawFigure(both ? 270 : CW / 2, 360, dispDeg, both ? 1 : 1.25);
+  if (mode === 'both' || mode === 'dial') drawDial(both ? 760 : CW / 2, 360, both ? 210 : 250, dispDeg, showNums);
+  tex.needsUpdate = true;
 }
-const label = makeLabel();
-function setLabel(text, color = '#1f2937') {
-  const { cv, tex } = label.userData; const g = cv.getContext('2d');
-  g.clearRect(0, 0, cv.width, cv.height); g.fillStyle = color; g.font = 'bold 64px sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 128, 64); tex.needsUpdate = true;
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+
+// side-view stick figure, facing right; trunk rotates about the hip
+function drawFigure(cx, cy, deg, s) {
+  const hipX = cx - 40 * s, hipY = cy + 10 * s, legL = 200 * s, trunkL = 190 * s, headR = 30 * s;
+  // ground
+  ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(cx - 190 * s, hipY + legL + 8); ctx.lineTo(cx + 200 * s, hipY + legL + 8); ctx.stroke();
+  // ghost upright trunk
+  ctx.strokeStyle = 'rgba(107,114,128,0.35)'; ctx.lineWidth = 14 * s; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(hipX, hipY - trunkL); ctx.stroke();
+  // legs
+  ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 16 * s;
+  ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(hipX, hipY + legL); ctx.lineTo(hipX + 30 * s, hipY + legL); ctx.stroke();
+  // trunk at displayed angle
+  const a = THREE.MathUtils.degToRad(deg);
+  const sx = hipX + Math.sin(a) * trunkL, sy = hipY - Math.cos(a) * trunkL;
+  ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 18 * s;
+  ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(sx, sy); ctx.stroke();
+  // arm hanging
+  ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 10 * s;
+  const shx = hipX + Math.sin(a) * trunkL * 0.85, shy = hipY - Math.cos(a) * trunkL * 0.85;
+  ctx.beginPath(); ctx.moveTo(shx, shy); ctx.lineTo(shx + 10 * s, shy + 150 * s); ctx.stroke();
+  // head
+  const hx = hipX + Math.sin(a) * (trunkL + headR + 6 * s), hy = hipY - Math.cos(a) * (trunkL + headR + 6 * s);
+  ctx.fillStyle = '#1d4ed8'; ctx.beginPath(); ctx.arc(hx, hy, headR, 0, Math.PI * 2); ctx.fill();
+  // pelvis dot
+  ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(hipX, hipY, 9 * s, 0, Math.PI * 2); ctx.fill();
+}
+
+// clock-like goniometer dial: 0° at 12 o'clock, clockwise (forward)
+function drawDial(cx, cy, r, deg, showNums) {
+  const MAX = 120, start = -Math.PI / 2;
+  const ang = d => start + THREE.MathUtils.degToRad(d);
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#374151'; ctx.lineWidth = 6; ctx.stroke();
+  // scale arc
+  ctx.strokeStyle = '#d1d5db'; ctx.lineWidth = 16; ctx.beginPath(); ctx.arc(cx, cy, r * 0.82, ang(0), ang(MAX)); ctx.stroke();
+  // filled arc up to current
+  ctx.strokeStyle = '#93c5fd'; ctx.beginPath(); ctx.arc(cx, cy, r * 0.82, ang(0), ang(Math.min(deg, MAX))); ctx.stroke();
+  // ticks
+  for (let d = 0; d <= MAX; d += 10) {
+    const major = d % 30 === 0, t = ang(d), r1 = r * (major ? 0.66 : 0.72), r2 = r * 0.92;
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = major ? 6 : 3;
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(t) * r1, cy + Math.sin(t) * r1); ctx.lineTo(cx + Math.cos(t) * r2, cy + Math.sin(t) * r2); ctx.stroke();
+    if (major && showNums) {
+      ctx.fillStyle = '#111827'; ctx.font = `bold ${Math.round(r * 0.15)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(d), cx + Math.cos(t) * r * 0.5, cy + Math.sin(t) * r * 0.5);
+    }
+  }
+  // needle
+  const t = ang(Math.max(0, Math.min(deg, MAX + 10)));
+  ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - Math.cos(t) * r * 0.12, cy - Math.sin(t) * r * 0.12); ctx.lineTo(cx + Math.cos(t) * r * 0.86, cy + Math.sin(t) * r * 0.86); ctx.stroke();
+  ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2); ctx.fill();
+}
+
+// ---------- flexion estimate from head pose ----------
+const tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
+function headPose() {
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  cam.getWorldPosition(tmpP); cam.getWorldQuaternion(tmpQ);
+  const e = new THREE.Euler().setFromQuaternion(tmpQ, 'YXZ');
+  return { p: tmpP.clone(), yaw: e.y, pitch: e.x };
+}
+function calibrate() {
+  const h = headPose();
+  const hipr = parseFloat($('hipr').value) || 0.52;
+  const hipY = hipr * (h.p.y + 0.11);
+  calib = { p0: h.p, yaw0: h.yaw, hipY, fwd: new THREE.Vector3(-Math.sin(h.yaw), 0, -Math.cos(h.yaw)) };
+}
+function flexionDeg() {
+  if (!calib) return 0;
+  const h = headPose();
+  const d = h.p.clone().sub(calib.p0).dot(calib.fwd);          // forward displacement of head
+  const up = h.p.y - calib.hipY;                                 // head height above estimated hip
+  const deg = THREE.MathUtils.radToDeg(Math.atan2(Math.max(0, d), up));
+  return Math.max(0, deg);
 }
 
 // ---------- logging ----------
-const iso = () => new Date().toISOString();
 function log(event, extra = {}) {
-  const p = new THREE.Vector3(), q = new THREE.Quaternion();
-  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-  cam.getWorldPosition(p); cam.getWorldQuaternion(q);
-  const e = new THREE.Euler().setFromQuaternion(q, 'YXZ');
-  const drop = y0 == null ? null : (y0 - p.y);
-  LOG.push([ (performance.now() - t0).toFixed(1), iso(), event, blockIdx + 1, labelOf(blockIdx), gains[blockIdx] ?? '',
-    p.y.toFixed(4), p.z.toFixed(4), THREE.MathUtils.radToDeg(e.x).toFixed(2), drop == null ? '' : drop.toFixed(4),
-    extra.markerDrop == null ? '' : extra.markerDrop.toFixed(4) ]);
+  const h = headPose();
+  LOG.push([(performance.now() - t0).toFixed(1), new Date().toISOString(), event, blockIdx + 1, labelOf(blockIdx), gains[blockIdx] ?? '',
+    h.p.x.toFixed(4), h.p.y.toFixed(4), h.p.z.toFixed(4), THREE.MathUtils.radToDeg(h.pitch).toFixed(2),
+    extra.est == null ? '' : extra.est.toFixed(2), extra.disp == null ? '' : extra.disp.toFixed(2)]);
 }
 
 // ---------- controller input ----------
 const prev = {};
 function pressed(gp, i) { const now = !!gp.buttons[i]?.pressed; const was = prev[i]; prev[i] = now; return now && !was; }
+let blockText = 'A';
 function pollInput() {
   const session = renderer.xr.getSession(); if (!session) return;
   for (const src of session.inputSources) {
     if (src.handedness !== 'right' || !src.gamepad) continue;
     const gp = src.gamepad;
-    if (pressed(gp, 4)) { // A
-      const p = new THREE.Vector3(); renderer.xr.getCamera().getWorldPosition(p); y0 = p.y;
-      log('calibrate'); setLabel(labelOf(blockIdx) + ' ✓');
-    }
-    if (pressed(gp, 0)) { // trigger
-      if (y0 == null) { setLabel('A:基準', '#b91c1c'); continue; }
+    if (pressed(gp, 4)) { calibrate(); log('calibrate'); blockText = labelOf(blockIdx) + ' ✓'; }
+    if (pressed(gp, 0)) {
+      if (!calib) { blockText = labelOf(blockIdx) + '：Aボタンで基準'; continue; }
       running = !running; log(running ? 'block_start' : 'block_end');
-      setLabel(labelOf(blockIdx) + (running ? ' ●' : ''), running ? '#1d4ed8' : '#1f2937');
+      blockText = labelOf(blockIdx) + (running ? ' ● 記録中' : ' ✓');
     }
-    if (pressed(gp, 5)) { // B
+    if (pressed(gp, 5)) {
       if (running) { running = false; log('block_end'); }
-      blockIdx = Math.min(blockIdx + 1, gains.length - 1); y0 = null; log('next_block');
-      setLabel(labelOf(blockIdx));
+      blockIdx = Math.min(blockIdx + 1, gains.length - 1); calib = null; log('next_block');
+      blockText = labelOf(blockIdx);
     }
   }
 }
 
-// ---------- frame loop ----------
-let frame = 0;
-renderer.setAnimationLoop(() => {
+// ---------- loop ----------
+let frame = 0, loopErr = false;
+renderer.setAnimationLoop(() => { try {
   pollInput();
-  const k = parseFloat($('k').value) || 1.0;
-  const g = gains[blockIdx] ?? 1.0;
-  let mDrop = 0;
-  if (y0 != null) {
-    const p = new THREE.Vector3(); renderer.xr.getCamera().getWorldPosition(p);
-    const drop = Math.max(0, y0 - p.y);
-    mDrop = Math.min(RAIL_TOP - RAIL_BOTTOM, g * k * drop);
-  }
-  marker.position.y = RAIL_TOP - mDrop;
-  if (running && (frame++ % 2 === 0)) log('frame', { markerDrop: mDrop }); // ~36 Hz at 72 Hz display
+  let est, g;
+  if (renderer.xr.isPresenting) { est = flexionDeg(); g = gains[blockIdx] ?? 1.0; }
+  else { est = parseFloat($('sim').value); g = readGains()[0] ?? 1.0; blockText = '確認用'; }
+  const disp = g * est;
+  drawMonitor(disp, blockText, running);
+  if (running && (frame++ % 2 === 0)) log('frame', { est, disp });
   renderer.render(scene, camera);
-});
+} catch (err) {
+  if (!loopErr) { loopErr = true; status('描画中のエラー：' + err.message); }
+} });
+status('準備完了。Quest 3 で「VRを開始」を押してください。');
 
 // ---------- UI ----------
+$('sim').oninput = () => { $('simv').textContent = $('sim').value; };
+$('mon').oninput = placeMonitor;
+camera.lookAt(0, 1.6 - 0.15, -1); // preview faces the monitor
+
 $('enter').onclick = async () => {
-  gains = $('seq').value.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
+  gains = readGains();
   if (!gains.length) { status('ゲイン順序を入力してください。'); return; }
   if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-vr'))) {
     status('このブラウザではVRを開始できません。Quest 3 のブラウザ（HTTPSのページ）で開いてください。'); return;
   }
-  const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
-  await renderer.xr.setSession(session);
-  blockIdx = 0; y0 = null; t0 = performance.now(); LOG.length = 0;
-  log('session_start'); setLabel(labelOf(0));
+  let session;
+  try {
+    session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+    await renderer.xr.setSession(session);
+  } catch (err) { status('VRの開始に失敗しました：' + err.message); return; }
+  blockIdx = 0; calib = null; running = false; t0 = performance.now(); LOG.length = 0; blockText = 'A';
+  log('session_start');
   status(`実行中：参加者 ${$('pid').value}、${gains.length} ブロック`);
   session.addEventListener('end', () => { log('session_end'); status(`終了しました。記録 ${LOG.length} 行。「ログをCSVで保存」を押してください。`); });
 };
 
 $('dl').onclick = () => {
   if (!LOG.length) { status('記録がありません。'); return; }
-  const head = ['t_ms','wall_clock_utc','event','block','block_label','gain','head_y_m','head_z_m','head_pitch_deg','head_drop_m','marker_drop_m'];
-  const meta = `# participant=${$('pid').value}; sequence=${gains.join('/')}; k=${$('k').value}; app=v0.1`;
+  const head = ['t_ms','wall_clock_utc','event','block','block_label','gain','head_x_m','head_y_m','head_z_m','head_pitch_deg','est_flexion_deg','displayed_deg'];
+  const meta = `# participant=${$('pid').value}; sequence=${gains.join('/')}; mode=${$('mode').value}; numbers=${$('nums').checked}; hip_ratio=${$('hipr').value}; app=v0.3`;
   const csv = [meta, head.join(','), ...LOG.map(r => r.join(','))].join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
