@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trunk Gain VR（試作 v0.4）</title>
+<title>Trunk Gain VR（試作 v0.5）</title>
 <style>
   :root { --bg:#f7f7f5; --fg:#1f2937; --muted:#6b7280; --line:#d1d5db; --accent:#1d4ed8; }
   body { margin:0; font-family: system-ui, "Noto Sans JP", sans-serif; background:var(--bg); color:var(--fg); }
@@ -33,7 +33,7 @@ window.addEventListener('unhandledrejection', e => { const el=document.getElemen
 </head>
 <body>
 <main>
-  <h1>体幹前屈ゲイン操作VR（試作 v0.4）</h1>
+  <h1>体幹前屈ゲイン操作VR（試作 v0.5）</h1>
   <p class="muted">参加者の視点は常に正確なまま（VR酔い対策）です。視界に固定したモニターに、横から見た姿勢と角度計を表示し、その角度だけをゲイン倍します。各ブロックの後に、ずれに気づいたかをVR内で回答してもらいます。</p>
 
   <fieldset>
@@ -61,6 +61,9 @@ window.addEventListener('unhandledrejection', e => { const el=document.getElemen
     </div>
     <label><input id="practice" type="checkbox" checked>最初に練習ブロック（ゲイン1.0）を入れる</label>
     <label><input id="ask" type="checkbox" checked>各ブロックの後にVR内で質問する</label>
+    <label><input id="guide" type="checkbox" checked>VR内に手順の説明文を表示する（参加者向け）</label>
+    <label>1ブロックの前屈回数（説明文で数えて表示） <input id="nreps" type="number" min="1" max="20" value="5"></label>
+    <label>前屈の指示文 <input id="bendtxt" type="text" value="無理のない範囲で、ゆっくり前に曲げて、まっすぐに戻ってください"></label>
     <div id="order">（順序を表示します）</div>
     <p class="muted">この順序は実験者用です。VR内のモニターには「ブロック 3/10」のように番号だけが出て、ゲインは表示されません。</p>
   </fieldset>
@@ -102,6 +105,7 @@ window.addEventListener('unhandledrejection', e => { const el=document.getElemen
       <li><b>トリガー</b>：ブロックの記録を開始／終了（開始時に3回うなずくと Cometa の記録と照合しやすい）。終了すると質問画面になる</li>
       <li><b>質問画面</b>：スティックを左右（または上下）に倒して選び、トリガーで決定。回答が終わると自動で次のブロックへ</li>
       <li><b>Bボタン</b>：質問を飛ばして次のブロックへ進む（やり直しや中断用）</li>
+      <li><b>説明文</b>：各ブロックの前に準備画面（まっすぐ立つ→［A］）、記録中はモニター下部に「3回うなずく」→「前屈 n/5回目」→「トリガーで終了」と順に表示。回数は推定角が20°を超えて8°未満に戻るたびに数えます（目安。記録は止まりません）</li>
     </ul>
     <p class="muted">質問：①表示は実際の動きとずれていたか（はい／いいえ）→ ②「はい」のとき、表示は実際より大きいか小さいか → ③その回答への自信（0〜10）。<br>
     前屈角度は、直立時の頭の位置を基準に「股関節を中心に体幹が倒れた角度」として推定しています。大転子高を使うときは、Quest の床の高さ設定が正しいことを確認してください。腰椎角度の測定は Cometa のIMUで行ってください。<br>
@@ -115,7 +119,7 @@ window.addEventListener('unhandledrejection', e => { const el=document.getElemen
 <script type="module">
 import * as THREE from 'three';
 
-const APP = 'v0.4';
+const APP = 'v0.5';
 const $ = id => document.getElementById(id);
 const status = msg => { $('status').textContent = msg; };
 
@@ -181,11 +185,11 @@ const wall = new THREE.Mesh(new THREE.PlaneGeometry(8, 3), new THREE.MeshStandar
 wall.position.set(0, 1.5, -2.5); scene.add(wall);
 
 // ---------- head-locked monitor ----------
-const CW = 1024, CH = 640;
+const CW = 1024, CH = 800, GUIDE_Y = 640;   // bottom strip (y 640-800) holds the guidance text
 const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
 const ctx = cv.getContext('2d');
 const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-const monitor = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.40),
+const monitor = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.50),
   new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
 monitor.renderOrder = 10;
 camera.add(monitor);
@@ -208,6 +212,31 @@ function drawMonitor(dispDeg, headText, recording) {
   const both = mode === 'both';
   if (mode === 'both' || mode === 'figure') drawFigure(both ? 270 : CW / 2, 360, dispDeg, both ? 1 : 1.25);
   if (mode === 'both' || mode === 'dial') drawDial(both ? 760 : CW / 2, 360, both ? 210 : 250, dispDeg, showNums);
+  tex.needsUpdate = true;
+}
+// wrap text to a width; returns lines
+function wrap(text, maxW) {
+  const out = []; let line = '';
+  for (const ch of text) { if (ctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ch; } else line += ch; }
+  if (line) out.push(line); return out;
+}
+function drawGuideStrip(text, strong) {
+  if (!$('guide').checked || !text) return;
+  ctx.fillStyle = strong ? '#fef3c7' : '#eef2ff'; roundRect(28, GUIDE_Y, CW - 56, CH - GUIDE_Y - 24, 20); ctx.fill();
+  ctx.fillStyle = '#111827'; ctx.font = 'bold 40px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const ls = wrap(text, CW - 120).slice(0, 2), cy = GUIDE_Y + (CH - GUIDE_Y - 24) / 2;
+  ls.forEach((l, i) => ctx.fillText(l, CW / 2, cy + (i - (ls.length - 1) / 2) * 52));
+  tex.needsUpdate = true;
+}
+// full-panel guidance screen: title, body lines (wrapped), button cue
+function drawGuideScreen(title, body, cue) {
+  panel(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#1d4ed8'; ctx.font = 'bold 60px sans-serif'; ctx.fillText(title, CW / 2, 110);
+  ctx.fillStyle = '#111827'; ctx.font = '42px sans-serif';
+  const ls = body.flatMap(b => wrap(b, CW - 140));
+  ls.forEach((l, i) => ctx.fillText(l, CW / 2, 230 + i * 66));
+  ctx.fillStyle = '#fef3c7'; roundRect(CW / 2 - 330, CH - 150, 660, 100, 24); ctx.fill();
+  ctx.fillStyle = '#111827'; ctx.font = 'bold 46px sans-serif'; ctx.fillText(cue, CW / 2, CH - 100);
   tex.needsUpdate = true;
 }
 function drawMessage(lines) {
@@ -326,14 +355,14 @@ function log(event, extra = {}) {
     extra.est == null ? '' : extra.est.toFixed(2), extra.disp == null ? '' : extra.disp.toFixed(2),
     calib ? calib.hipY.toFixed(3) : '', extra.detect ?? '', extra.dir ?? '', extra.conf ?? '']);
 }
-const metaLine = () => `# participant=${$('pid').value}; plan=${plan.map(b => b.label + ':' + b.gain).join('/')}; order_mode=${$('ordmode').value}; mode=${$('mode').value}; numbers=${$('nums').checked}; trochanter_cm=${$('troch').value || 'NA'}; hip_ratio=${$('hipr').value}; monitor=${$('mon').value}; app=${APP}`;
+const metaLine = () => `# participant=${$('pid').value}; reps_per_block=${nReps()}; plan=${plan.map(b => b.label + ':' + b.gain).join('/')}; order_mode=${$('ordmode').value}; mode=${$('mode').value}; numbers=${$('nums').checked}; trochanter_cm=${$('troch').value || 'NA'}; hip_ratio=${$('hipr').value}; monitor=${$('mon').value}; app=${APP}`;
 function autosave() {
   try { localStorage.setItem('trunkgain_last', JSON.stringify({ pid: $('pid').value, meta: metaLine(), LOG, RESP, saved: new Date().toISOString() })); }
   catch (e) { /* storage may be full or unavailable; the in-memory log is still intact */ }
 }
 
 // ---------- block flow ----------
-function startBlock() { running = true; blockStats = { startT: performance.now(), peakEst: 0, peakDisp: 0 }; log('block_start'); }
+function startBlock() { running = true; blockStats = { startT: performance.now(), peakEst: 0, peakDisp: 0, reps: 0, down: false }; log('block_start'); }
 function endBlock() {
   running = false; log('block_end');
   if ($('ask').checked) Q = { step: 'detect', sel: Math.random() < 0.5 ? 0 : 1, detect: null, dir: null, conf: 5 };   // random initial cursor avoids a default-answer bias
@@ -342,7 +371,7 @@ function endBlock() {
 function recordResponse() {
   const b = cur(), s = blockStats || { startT: performance.now(), peakEst: 0, peakDisp: 0 };
   const r = { pid: $('pid').value, block_no: blockIdx + 1, label: b.label, practice: b.practice ? 1 : 0, gain: b.gain,
-    duration_s: ((performance.now() - s.startT) / 1000).toFixed(1), peak_est_deg: s.peakEst.toFixed(1), peak_disp_deg: s.peakDisp.toFixed(1),
+    duration_s: ((performance.now() - s.startT) / 1000).toFixed(1), peak_est_deg: s.peakEst.toFixed(1), peak_disp_deg: s.peakDisp.toFixed(1), reps: s.reps ?? '',
     detect: Q ? Q.detect : '', direction: Q ? (Q.dir ?? '') : '', confidence: Q ? Q.conf : '' };
   RESP.push(r);
   if (Q) log('response', { detect: Q.detect, dir: Q.dir ?? '', conf: Q.conf });
@@ -397,6 +426,24 @@ function pollInput() {
   }
 }
 
+// ---------- participant guidance ----------
+const nReps = () => Math.max(1, parseInt($('nreps').value) || 5);
+function drawPreBlock() {
+  const b = cur(), firstMain = !b.practice && blockIdx > 0 && plan[blockIdx - 1].practice;
+  if (b.practice) drawGuideScreen('練習', ['これから、体を前に曲げる課題を行います。', 'このモニターに、横から見たあなたの姿勢と角度計が出ます。', 'まっすぐ立ち、正面を向いてください。'], '準備ができたら［A］');
+  else if (firstMain) drawGuideScreen('ここから本番です', [`${blockName()}`, '練習と同じように行います。', 'まっすぐ立ち、正面を向いてください。'], '準備ができたら［A］');
+  else if (!plan[0].practice && blockIdx === 0) drawGuideScreen(blockName(), ['これから、体を前に曲げる課題を行います。', 'まっすぐ立ち、正面を向いてください。'], '準備ができたら［A］');
+  else drawGuideScreen(blockName(), ['少し休んでから、', 'まっすぐ立ち、正面を向いてください。'], '準備ができたら［A］');
+}
+function guideText() {        // returns [text, highlight]
+  if (!calib) return ['まっすぐ立ち、正面を向いて［A］', true];
+  if (!running) return ['［トリガー］で開始します。開始したら、まず3回うなずいてください', true];
+  const s = blockStats, el = (performance.now() - s.startT) / 1000;
+  if (el < 4) return ['3回うなずいてください', true];
+  if (s.reps >= nReps()) return [`${nReps()}回終わりました。［トリガー］で終了します`, true];
+  return [`${$('bendtxt').value}（${s.reps + 1}/${nReps()}回目）`, false];
+}
+
 // ---------- loop ----------
 let frame = 0, loopErr = false;
 renderer.setAnimationLoop(() => { try {
@@ -406,15 +453,19 @@ renderer.setAnimationLoop(() => { try {
     else if (Q) drawQuestion(Q);
     else {
       const est = flexionDeg(), disp = cur().gain * est;
-      drawMonitor(disp, blockName() + hint, running);
       if (running) {
-        blockStats.peakEst = Math.max(blockStats.peakEst, est); blockStats.peakDisp = Math.max(blockStats.peakDisp, disp);
+        const s = blockStats;
+        s.peakEst = Math.max(s.peakEst, est); s.peakDisp = Math.max(s.peakDisp, disp);
+        if (!s.down && est > 20) s.down = true;                                   // counted on return to upright
+        else if (s.down && est < 8) { s.down = false; s.reps++; log('rep', { est, disp }); }
         if (frame++ % 2 === 0) log('frame', { est, disp });
       }
+      if (!calib && !running && $('guide').checked) drawPreBlock();
+      else { drawMonitor(disp, blockName() + hint, running); drawGuideStrip(...guideText()); }
     }
   } else {
     if ($('simq').checked) drawQuestion({ step: 'detect', sel: 0 });
-    else drawMonitor(parseFloat($('simg').value) * parseFloat($('sim').value), '確認用', false);
+    else { drawMonitor(parseFloat($('simg').value) * parseFloat($('sim').value), '確認用', false); drawGuideStrip(`${$('bendtxt').value}（2/${nReps()}回目）`, false); }
   }
   renderer.render(scene, camera);
 } catch (err) {
@@ -463,7 +514,7 @@ $('dl').onclick = () => {
 };
 $('dl2').onclick = () => {
   if (!RESP.length) { status('回答がありません。'); return; }
-  const cols = ['pid','block_no','label','practice','gain','duration_s','peak_est_deg','peak_disp_deg','detect','direction','confidence'];
+  const cols = ['pid','block_no','label','practice','gain','duration_s','reps','peak_est_deg','peak_disp_deg','detect','direction','confidence'];
   download([restoredMeta || metaLine(), cols.join(','), ...RESP.map(r => cols.map(c => r[c]).join(','))].join('\n'), `trunkgain_${$('pid').value}_${stamp()}_responses.csv`);
 };
 $('restore').onclick = () => {
